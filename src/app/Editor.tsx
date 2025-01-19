@@ -18,15 +18,20 @@ import GithubLinkModal from './GithubLinkModal'; // Adjust the import path as ne
 // Import default styles
 import '@blocknote/core/fonts/inter.css';
 import '@blocknote/mantine/style.css';
+import { FigmaBlock } from './FigmaEmbed';
+import { FaFigma } from 'react-icons/fa6';
+import FigmaLinkModal from './FigmaLinkModal';
 
 const schema = BlockNoteSchema.create({
   blockSpecs: {
     ...defaultBlockSpecs,
-    github: GithubBlock,
+    figma: FigmaBlock, // Existing Figma block
+    github: GithubBlock, // New GitHub block
   },
 });
 
 export default function Editor() {
+  const [isFigmaModalOpen, setIsFigmaModalOpen] = useState(false);
   const [isGithubModalOpen, setIsGithubModalOpen] = useState(false);
   const editor = useCreateBlockNote({
     schema,
@@ -44,6 +49,23 @@ export default function Editor() {
       },
     ],
   });
+
+  const handleInsertFigma = (url: string) => {
+    insertOrUpdateBlock(editor, {
+      type: "figma",
+      props: {
+        url,
+      },
+    });
+  };
+
+  const insertFigma = {
+    title: "Add Figma Design Link",
+    onItemClick: () => setIsFigmaModalOpen(true),
+    aliases: ["figma", "design", "embed"],
+    group: "Media",
+    icon: <FaFigma />,
+  };
 
   const handleInsertGithub = (url: string) => {
     insertOrUpdateBlock(editor, {
@@ -120,13 +142,18 @@ export default function Editor() {
           triggerCharacter={'/'}
           getItems={async (query) =>
             filterSuggestionItems(
-              [...getDefaultReactSlashMenuItems(editor), insertGithub],
+              [...getDefaultReactSlashMenuItems(editor), insertFigma, insertGithub],
               query
             )
           }
         />
       </BlockNoteView>
-
+      
+      <FigmaLinkModal
+        isOpen={isFigmaModalOpen}
+        onClose={() => setIsFigmaModalOpen(false)}
+        onSubmit={handleInsertFigma}
+      />
       <GithubLinkModal
         isOpen={isGithubModalOpen}
         onClose={() => setIsGithubModalOpen(false)}

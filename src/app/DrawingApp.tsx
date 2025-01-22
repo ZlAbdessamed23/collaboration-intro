@@ -1,10 +1,10 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Stage, Layer, Line, Rect, Circle, Text, Transformer, Image as KonvaImage } from 'react-konva';
+import { Stage, Layer, Line, Rect, Circle, Text, Transformer, Image as KonvaImage, Arrow, Group } from 'react-konva';
 import type { KonvaEventObject } from 'konva/lib/Node';
 
-type ToolType = 'cursor' | 'draw' | 'eraser' | 'rectangle' | 'circle' | 'text' | 'image';
+type ToolType = 'cursor' | 'draw' | 'eraser' | 'rectangle' | 'circle' | 'text' | 'image' | 'pen';
 
 interface Tool {
     name: ToolType;
@@ -19,7 +19,7 @@ interface DrawLine {
 
 interface Shape {
     id: string;
-    type: 'rectangle' | 'circle' | 'text' | 'image';
+    type: 'rectangle' | 'circle' | 'text' | 'image' | 'pen';
     x: number;
     y: number;
     width: number;
@@ -31,6 +31,7 @@ interface Shape {
     fontSize?: number;
     fontFamily?: string;
     image?: HTMLImageElement; // For image shapes
+    points?: Array<{ x: number; y: number }>;
 }
 
 const DrawingApp = () => {
@@ -51,6 +52,8 @@ const DrawingApp = () => {
         fontFamily: 'Arial',
         fill: '#000000',
     });
+    const [currentPenPath, setCurrentPenPath] = useState<Array<{ x: number; y: number }>>([]);
+    const [mousePosition, setMousePosition] = useState<{ x: number; y: number } | null>(null);
     const stageRef = useRef<any>(null);
     const transformerRef = useRef<any>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -63,7 +66,44 @@ const DrawingApp = () => {
         { name: 'circle', icon: '⭕' },
         { name: 'text', icon: 'T' },
         { name: 'image', icon: '🖼️' }, // New image tool
+        { name: 'pen', icon: '🖋️' },
     ];
+
+    const selectTool = (newTool: ToolType) => {
+        if (tool === 'pen' && currentPenPath.length > 0) {
+            commitPenPath();
+        }
+        setTool(newTool);
+    };
+
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape' && tool === 'pen' && currentPenPath.length > 0) {
+                commitPenPath();
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [tool, currentPenPath, shapes, fillColor, strokeColor]);
+
+    const commitPenPath = () => {
+        if (currentPenPath.length > 0) {
+            const newShape: Shape = {
+                id: `pen-${Date.now()}`,
+                type: 'pen',
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+                fill: fillColor,
+                stroke: strokeColor,
+                strokeWidth: 2,
+                points: [...currentPenPath],
+            };
+            setShapes([...shapes, newShape]);
+            setCurrentPenPath([]);
+        }
+    };
 
     // Handle mouse down for drawing, shapes, and text
     const handleMouseDown = (e: KonvaEventObject<MouseEvent>) => {
@@ -118,6 +158,11 @@ const DrawingApp = () => {
                 });
                 setShapes(newShapes);
             }
+        } else if (tool === 'pen') {
+            const pos = e.target.getStage()?.getPointerPosition();
+            if (pos) {
+                setCurrentPenPath([...currentPenPath, { x: pos.x, y: pos.y }]);
+            }
         }
     };
 
@@ -125,21 +170,19 @@ const DrawingApp = () => {
     const handleMouseMove = (e: KonvaEventObject<MouseEvent>) => {
         if (!isDrawing) return;
 
-        if (tool === 'draw') {
-            const stage = e.target.getStage();
-            const point = stage?.getPointerPosition();
-            if (point) {
+        const stage = e.target.getStage();
+        const point = stage?.getPointerPosition();
+        if (point) {
+            setMousePosition({ x: point.x, y: point.y }); // Track mouse position
+
+            if (tool === 'draw') {
                 const lastLine = lines[lines.length - 1];
                 if (lastLine) {
                     lastLine.points = lastLine.points.concat([point.x, point.y]);
                     lines.splice(lines.length - 1, 1, lastLine);
                     setLines([...lines]);
                 }
-            }
-        } else if (['rectangle', 'circle'].includes(tool)) {
-            const stage = e.target.getStage();
-            const point = stage?.getPointerPosition();
-            if (point) {
+            } else if (['rectangle', 'circle'].includes(tool)) {
                 const lastShape = shapes[shapes.length - 1];
                 if (lastShape) {
                     const newWidth = point.x - lastShape.x;
@@ -154,10 +197,10 @@ const DrawingApp = () => {
             }
         }
     };
-
     // Handle mouse up to stop drawing
     const handleMouseUp = () => {
         setIsDrawing(false);
+        setMousePosition(null);
     };
 
     // Handle shape click to select it
@@ -198,6 +241,8 @@ const DrawingApp = () => {
         setIsTextInputVisible(false);
         setTextInput('');
     };
+
+    
 
     // Handle deleting a shape
     const handleDeleteShape = () => {
@@ -444,7 +489,7 @@ const DrawingApp = () => {
                 {tools.map((item) => (
                     <button
                         key={item.name}
-                        onClick={() => setTool(item.name)}
+                        onClick={() => selectTool(item.name)}
                         className={`w-full aspect-square flex items-center justify-center text-xl rounded
                             ${tool === item.name ? 'bg-blue-500 text-white' : 'bg-gray-700 text-gray-300'}
                             hover:bg-blue-400 transition-colors`}
@@ -615,6 +660,48 @@ const DrawingApp = () => {
                                             }}
                                         />
                                     );
+                                } else if (shape.type === 'pen') {
+                                    return (
+                                        <Group key={shape.id}>
+                                            {shape.points?.map((point, index) => (
+                                                <Circle
+                                                    key={`${shape.id}-point-${index}`}
+                                                    x={point.x}
+                                                    y={point.y}
+                                                    radius={5}
+                                                    fill={shape.stroke}
+                                                    stroke="black"
+                                                    strokeWidth={1}
+                                                />
+                                            ))}
+                                            {shape.points?.map((point, index) => {
+                                                if (index === 0) return null; // Skip the first point
+                                                const prev = shape.points![index - 1];
+                                                const isLastSegment = index === shape.points!.length - 1;
+
+                                                return isLastSegment ? (
+                                                    <Arrow
+                                                        key={`${shape.id}-arrow-${index}`}
+                                                        points={[prev.x, prev.y, point.x, point.y]}
+                                                        stroke={shape.stroke}
+                                                        fill={shape.stroke}
+                                                        strokeWidth={shape.strokeWidth}
+                                                        pointerLength={10}
+                                                        pointerWidth={10}
+                                                    />
+                                                ) : (
+                                                    <Line
+                                                        key={`${shape.id}-line-${index}`}
+                                                        points={[prev.x, prev.y, point.x, point.y]}
+                                                        stroke={shape.stroke}
+                                                        strokeWidth={shape.strokeWidth}
+                                                        lineCap="round"
+                                                        lineJoin="round"
+                                                    />
+                                                );
+                                            })}
+                                        </Group>
+                                    );
                                 }
                                 return null;
                             })}
@@ -627,6 +714,51 @@ const DrawingApp = () => {
                                         }
                                         return newBox;
                                     }}
+                                />
+                            )}
+                            {currentPenPath.length > 0 && (
+                                <Group>
+                                    {currentPenPath.map((point, index) => (
+                                        <Circle
+                                            key={`pen-preview-point-${index}`}
+                                            x={point.x}
+                                            y={point.y}
+                                            radius={5}
+                                            fill={strokeColor}
+                                            stroke="black"
+                                            strokeWidth={1}
+                                        />
+                                    ))}
+                                    {currentPenPath.map((point, index) => {
+                                        if (index === 0) return null;
+                                        const prev = currentPenPath[index - 1];
+                                        return (
+                                            <Arrow
+                                                key={`pen-preview-arrow-${index}`}
+                                                points={[prev.x, prev.y, point.x, point.y]}
+                                                stroke={strokeColor}
+                                                fill={strokeColor}
+                                                strokeWidth={2}
+                                                pointerLength={10}
+                                                pointerWidth={10}
+                                            />
+                                        );
+                                    })}
+                                </Group>
+                            )}
+                            {currentPenPath.length > 0 && mousePosition && (
+                                <Line
+                                    points={[
+                                        currentPenPath[currentPenPath.length - 1].x,
+                                        currentPenPath[currentPenPath.length - 1].y,
+                                        mousePosition.x,
+                                        mousePosition.y,
+                                    ]}
+                                    stroke={strokeColor}
+                                    strokeWidth={2}
+                                    lineCap="round"
+                                    lineJoin="round"
+                                    dash={[5, 5]} // Optional: Add a dashed line for the preview
                                 />
                             )}
                         </Layer>

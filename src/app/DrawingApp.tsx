@@ -54,6 +54,7 @@ const DrawingApp = () => {
     });
     const [currentPenPath, setCurrentPenPath] = useState<Array<{ x: number; y: number }>>([]);
     const [mousePosition, setMousePosition] = useState<{ x: number; y: number } | null>(null);
+    const [isShiftPressed, setIsShiftPressed] = useState(false);
     const stageRef = useRef<any>(null);
     const transformerRef = useRef<any>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -173,20 +174,36 @@ const DrawingApp = () => {
         const stage = e.target.getStage();
         const point = stage?.getPointerPosition();
         if (point) {
-            setMousePosition({ x: point.x, y: point.y }); // Track mouse position
+            let constrainedPoint = { ...point };
+
+            // Apply Shift key constraint for pen tool
+            if (tool === 'pen' && isShiftPressed && currentPenPath.length > 0) {
+                const lastPoint = currentPenPath[currentPenPath.length - 1];
+                const deltaX = Math.abs(point.x - lastPoint.x);
+                const deltaY = Math.abs(point.y - lastPoint.y);
+
+                // Snap to horizontal or vertical based on which delta is larger
+                if (deltaX > deltaY) {
+                    constrainedPoint.y = lastPoint.y; // Snap to horizontal (keep y constant)
+                } else {
+                    constrainedPoint.x = lastPoint.x; // Snap to vertical (keep x constant)
+                }
+            }
+
+            setMousePosition(constrainedPoint);
 
             if (tool === 'draw') {
                 const lastLine = lines[lines.length - 1];
                 if (lastLine) {
-                    lastLine.points = lastLine.points.concat([point.x, point.y]);
+                    lastLine.points = lastLine.points.concat([constrainedPoint.x, constrainedPoint.y]);
                     lines.splice(lines.length - 1, 1, lastLine);
                     setLines([...lines]);
                 }
             } else if (['rectangle', 'circle'].includes(tool)) {
                 const lastShape = shapes[shapes.length - 1];
                 if (lastShape) {
-                    const newWidth = point.x - lastShape.x;
-                    const newHeight = point.y - lastShape.y;
+                    const newWidth = constrainedPoint.x - lastShape.x;
+                    const newHeight = constrainedPoint.y - lastShape.y;
                     shapes.splice(shapes.length - 1, 1, {
                         ...lastShape,
                         width: newWidth,
@@ -199,6 +216,9 @@ const DrawingApp = () => {
     };
     // Handle mouse up to stop drawing
     const handleMouseUp = () => {
+        if (tool === 'pen' && mousePosition) {
+            setCurrentPenPath([...currentPenPath, mousePosition]);
+        }
         setIsDrawing(false);
         setMousePosition(null);
     };
@@ -242,7 +262,7 @@ const DrawingApp = () => {
         setTextInput('');
     };
 
-    
+
 
     // Handle deleting a shape
     const handleDeleteShape = () => {
@@ -481,6 +501,28 @@ const DrawingApp = () => {
         }
     }, [selectedShapeId]);
 
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Shift') {
+                setIsShiftPressed(true);
+            }
+        };
+
+        const handleKeyUp = (e: KeyboardEvent) => {
+            if (e.key === 'Shift') {
+                setIsShiftPressed(false);
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        window.addEventListener('keyup', handleKeyUp);
+
+        return () => {
+            window.removeEventListener('keydown', handleKeyDown);
+            window.removeEventListener('keyup', handleKeyUp);
+        };
+    }, []);
+
     const selectedShape = shapes.find((shape) => shape.id === selectedShapeId);
 
     return (
@@ -532,6 +574,21 @@ const DrawingApp = () => {
                         ref={stageRef}
                     >
                         <Layer>
+                            {tool === 'pen' && currentPenPath.length > 0 && mousePosition && (
+                                <Arrow
+                                    points={[
+                                        currentPenPath[currentPenPath.length - 1].x,
+                                        currentPenPath[currentPenPath.length - 1].y,
+                                        mousePosition.x,
+                                        mousePosition.y,
+                                    ]}
+                                    stroke={strokeColor}
+                                    fill={strokeColor}
+                                    strokeWidth={2}
+                                    pointerLength={10}
+                                    pointerWidth={10}
+                                />
+                            )}
                             {lines.map((line, i) => (
                                 <Line
                                     key={i}

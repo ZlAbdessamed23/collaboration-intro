@@ -3,6 +3,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Stage, Layer, Line, Rect, Circle, Text, Transformer, Image as KonvaImage, Arrow, Group } from 'react-konva';
 import type { KonvaEventObject } from 'konva/lib/Node';
+import { useGesture } from '@use-gesture/react';
+import { FaPlus, FaMinus } from 'react-icons/fa';
 
 type ToolType = 'cursor' | 'draw' | 'eraser' | 'rectangle' | 'circle' | 'text' | 'image' | 'pen';
 
@@ -32,7 +34,7 @@ interface Shape {
     fontFamily?: string;
     image?: HTMLImageElement; // For image shapes
     points?: Array<{ x: number; y: number }>;
-}
+};
 
 const DrawingApp = () => {
     const [tool, setTool] = useState<ToolType>('cursor');
@@ -55,9 +57,104 @@ const DrawingApp = () => {
     const [currentPenPath, setCurrentPenPath] = useState<Array<{ x: number; y: number }>>([]);
     const [mousePosition, setMousePosition] = useState<{ x: number; y: number } | null>(null);
     const [isShiftPressed, setIsShiftPressed] = useState(false);
+    const [position, setPosition] = useState({ x: 0, y: 0 });
+    const [zoom, setZoom] = useState(1);
     const stageRef = useRef<any>(null);
     const transformerRef = useRef<any>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const isCtrlPressed = useRef(false);
+    const containerRef = useRef<HTMLDivElement>(null);
+
+    const MIN_ZOOM = 0.3;
+    const MAX_ZOOM = 1.8;
+    const ZOOM_STEP = 0.05;
+    const SPACING = 50;
+    const DOT_SIZE = 2;
+
+
+    const generateDots = () => {
+        const dots = [];
+        const CANVAS_WIDTH = 2000;
+        const CANVAS_HEIGHT = 2000;
+
+        // Calculate the starting positions by negating the stage position
+        const startX = -position.x / zoom;
+        const startY = -position.y / zoom;
+
+        // Calculate how many dots we need in each direction
+        const dotsX = Math.ceil(CANVAS_WIDTH / SPACING);
+        const dotsY = Math.ceil(CANVAS_HEIGHT / SPACING);
+
+        for (let i = 0; i <= dotsX; i++) {
+            for (let j = 0; j <= dotsY; j++) {
+                const x = startX + (i * SPACING);
+                const y = startY + (j * SPACING);
+
+                dots.push(
+                    <Circle
+                        key={`${x}-${y}`}
+                        x={x}
+                        y={y}
+                        radius={DOT_SIZE}
+                        fill="red"
+                        listening={false}
+                    />
+                );
+            }
+        }
+        return dots;
+    };
+
+    
+    const handleZoom = (delta: number) => {
+        const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom + delta));
+        setZoom(newZoom);
+    };
+
+    const bind = useGesture({
+        onDrag: ({ delta: [dx, dy], event, down }) => {
+            if (!(event.ctrlKey && down)) return;
+
+            setPosition(prev => ({
+                x: prev.x + dx,
+                y: prev.y + dy
+            }));
+        },
+        onWheel: ({ event }) => {
+            if (!event.ctrlKey || !(event instanceof WheelEvent)) return;
+            event.preventDefault();
+            const delta = event.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP;
+            handleZoom(delta);
+        }
+    });
+
+    const adjustCoordinates = (stage: any, x: number, y: number) => {
+        const scaleX = stage.scaleX();
+        const scaleY = stage.scaleY();
+        const offsetX = stage.x();
+        const offsetY = stage.y();
+
+        return {
+            x: (x - offsetX) / scaleX,
+            y: (y - offsetY) / scaleY,
+        };
+    };
+
+    useEffect(() => {
+        const container = containerRef.current;
+        if (container) {
+            const handleResize = () => {
+                const rect = container.getBoundingClientRect();
+                setPosition({ x: rect.width / 2, y: rect.height / 2 });
+            };
+            window.addEventListener('resize', handleResize);
+            handleResize();
+            return () => window.removeEventListener('resize', handleResize);
+        }
+    }, []);
+
+
+
 
     const tools: Tool[] = [
         { name: 'cursor', icon: '👆' },
@@ -108,20 +205,20 @@ const DrawingApp = () => {
 
     // Handle mouse down for drawing, shapes, and text
     const handleMouseDown = (e: KonvaEventObject<MouseEvent>) => {
-        if (tool === 'draw') {
-            setIsDrawing(true);
-            const pos = e.target.getStage()?.getPointerPosition();
-            if (pos) {
-                setLines([...lines, { tool, points: [pos.x, pos.y], color: strokeColor }]);
-            }
-        } else if (['rectangle', 'circle'].includes(tool)) {
-            const pos = e.target.getStage()?.getPointerPosition();
-            if (pos) {
+        const stage = e.target.getStage();
+        const pos = stage?.getPointerPosition();
+        if (pos) {
+            const adjustedPos = adjustCoordinates(stage, pos.x, pos.y);
+
+            if (tool === 'draw') {
+                setIsDrawing(true);
+                setLines([...lines, { tool, points: [adjustedPos.x, adjustedPos.y], color: strokeColor }]);
+            } else if (['rectangle', 'circle'].includes(tool)) {
                 const newShape: Shape = {
                     id: `shape-${Date.now()}`,
                     type: tool as Shape['type'],
-                    x: pos.x,
-                    y: pos.y,
+                    x: adjustedPos.x,
+                    y: adjustedPos.y,
                     width: 0,
                     height: 0,
                     fill: fillColor,
@@ -130,39 +227,30 @@ const DrawingApp = () => {
                 };
                 setShapes([...shapes, newShape]);
                 setIsDrawing(true);
-            }
-        } else if (tool === 'text') {
-            const pos = e.target.getStage()?.getPointerPosition();
-            if (pos) {
-                setTextInputPosition({ x: pos.x, y: pos.y });
+            } else if (tool === 'text') {
+                setTextInputPosition({ x: adjustedPos.x, y: adjustedPos.y });
                 setIsTextInputVisible(true);
-            }
-        } else if (tool === 'eraser') {
-            const pos = e.target.getStage()?.getPointerPosition();
-            if (pos) {
+            } else if (tool === 'eraser') {
                 const newLines = lines.filter((line) => {
                     return !line.points.some((point, index) => {
                         const x = line.points[index];
                         const y = line.points[index + 1];
-                        return Math.abs(x - pos.x) < 10 && Math.abs(y - pos.y) < 10;
+                        return Math.abs(x - adjustedPos.x) < 10 && Math.abs(y - adjustedPos.y) < 10;
                     });
                 });
                 setLines(newLines);
 
                 const newShapes = shapes.filter((shape) => {
                     return !(
-                        pos.x >= shape.x &&
-                        pos.x <= shape.x + shape.width &&
-                        pos.y >= shape.y &&
-                        pos.y <= shape.y + shape.height
+                        adjustedPos.x >= shape.x &&
+                        adjustedPos.x <= shape.x + shape.width &&
+                        adjustedPos.y >= shape.y &&
+                        adjustedPos.y <= shape.y + shape.height
                     );
                 });
                 setShapes(newShapes);
-            }
-        } else if (tool === 'pen') {
-            const pos = e.target.getStage()?.getPointerPosition();
-            if (pos) {
-                setCurrentPenPath([...currentPenPath, { x: pos.x, y: pos.y }]);
+            } else if (tool === 'pen') {
+                setCurrentPenPath([...currentPenPath, { x: adjustedPos.x, y: adjustedPos.y }]);
             }
         }
     };
@@ -172,38 +260,22 @@ const DrawingApp = () => {
         if (!isDrawing) return;
 
         const stage = e.target.getStage();
-        const point = stage?.getPointerPosition();
-        if (point) {
-            let constrainedPoint = { ...point };
-
-            // Apply Shift key constraint for pen tool
-            if (tool === 'pen' && isShiftPressed && currentPenPath.length > 0) {
-                const lastPoint = currentPenPath[currentPenPath.length - 1];
-                const deltaX = Math.abs(point.x - lastPoint.x);
-                const deltaY = Math.abs(point.y - lastPoint.y);
-
-                // Snap to horizontal or vertical based on which delta is larger
-                if (deltaX > deltaY) {
-                    constrainedPoint.y = lastPoint.y; // Snap to horizontal (keep y constant)
-                } else {
-                    constrainedPoint.x = lastPoint.x; // Snap to vertical (keep x constant)
-                }
-            }
-
-            setMousePosition(constrainedPoint);
+        const pos = stage?.getPointerPosition();
+        if (pos) {
+            const adjustedPos = adjustCoordinates(stage, pos.x, pos.y);
 
             if (tool === 'draw') {
                 const lastLine = lines[lines.length - 1];
                 if (lastLine) {
-                    lastLine.points = lastLine.points.concat([constrainedPoint.x, constrainedPoint.y]);
+                    lastLine.points = lastLine.points.concat([adjustedPos.x, adjustedPos.y]);
                     lines.splice(lines.length - 1, 1, lastLine);
                     setLines([...lines]);
                 }
             } else if (['rectangle', 'circle'].includes(tool)) {
                 const lastShape = shapes[shapes.length - 1];
                 if (lastShape) {
-                    const newWidth = constrainedPoint.x - lastShape.x;
-                    const newHeight = constrainedPoint.y - lastShape.y;
+                    const newWidth = adjustedPos.x - lastShape.x;
+                    const newHeight = adjustedPos.y - lastShape.y;
                     shapes.splice(shapes.length - 1, 1, {
                         ...lastShape,
                         width: newWidth,
@@ -261,8 +333,6 @@ const DrawingApp = () => {
         setIsTextInputVisible(false);
         setTextInput('');
     };
-
-
 
     // Handle deleting a shape
     const handleDeleteShape = () => {
@@ -330,9 +400,11 @@ const DrawingApp = () => {
 
     const handleTextToolClick = (e: KonvaEventObject<MouseEvent>) => {
         if (tool === 'text') {
-            const pos = e.target.getStage()?.getPointerPosition();
+            const stage = e.target.getStage();
+            const pos = stage?.getPointerPosition();
             if (pos) {
-                setTextInputPosition({ x: pos.x, y: pos.y });
+                const adjustedPos = adjustCoordinates(stage, pos.x, pos.y);
+                setTextInputPosition({ x: adjustedPos.x, y: adjustedPos.y });
                 setIsEditingText(true);
                 setCurrentText('Enter text here...');
             }
@@ -505,13 +577,18 @@ const DrawingApp = () => {
         const handleKeyDown = (e: KeyboardEvent) => {
             if (e.key === 'Shift') {
                 setIsShiftPressed(true);
-            }
+            } else if (e.key === 'Control') {
+                isCtrlPressed.current = true;
+            };
         };
 
         const handleKeyUp = (e: KeyboardEvent) => {
             if (e.key === 'Shift') {
                 setIsShiftPressed(false);
-            }
+            } else if (e.key === 'Control') {
+                isCtrlPressed.current = false;
+            };
+
         };
 
         window.addEventListener('keydown', handleKeyDown);
@@ -526,8 +603,8 @@ const DrawingApp = () => {
     const selectedShape = shapes.find((shape) => shape.id === selectedShapeId);
 
     return (
-        <div className="flex h-screen w-full">
-            <div className="w-16 bg-gray-800 p-2 flex flex-col gap-4">
+        <div className="h-screen w-full relative" ref={containerRef} {...bind()}>
+            <div className="w-16 bg-gray-800 p-2 flex flex-col gap-4 rounded-md fixed left-2 top-14 z-50">
                 {tools.map((item) => (
                     <button
                         key={item.name}
@@ -555,15 +632,30 @@ const DrawingApp = () => {
             </div>
 
             <div className="flex-1 bg-gray-100 relative overflow-auto">
+                <div className="fixed top-4 right-4 flex gap-2 bg-white z-50">
+                    <button onClick={() => handleZoom(ZOOM_STEP)} disabled={zoom >= MAX_ZOOM}>
+                        <FaPlus size={24} />
+                    </button>
+                    <span>Zoom: {(zoom * 100).toFixed(0)}%</span>
+                    <button onClick={() => handleZoom(-ZOOM_STEP)} disabled={zoom <= MIN_ZOOM}>
+                        <FaMinus size={24} />
+                    </button>
+                </div>
                 <div
                     style={{
-                        width: '2000px',
-                        height: '2000px',
+                        width: '3000px',
+                        height: '3000px',
+                        cursor: isCtrlPressed.current ? 'grab' : 'default'
                     }}
                 >
                     <Stage
+                        ref={stageRef}
                         width={2000}
                         height={2000}
+                        scaleX={zoom}
+                        scaleY={zoom}
+                        x={position.x}
+                        y={position.y}
                         onMouseDown={handleMouseDown}
                         onMouseMove={handleMouseMove}
                         onMouseUp={handleMouseUp}
@@ -571,9 +663,10 @@ const DrawingApp = () => {
                             handleStageClick(e);
                             handleTextToolClick(e);
                         }}
-                        ref={stageRef}
+                        onMouseLeave={handleMouseUp}
                     >
                         <Layer>
+                            {generateDots()}
                             {tool === 'pen' && currentPenPath.length > 0 && mousePosition && (
                                 <Arrow
                                     points={[
@@ -825,8 +918,9 @@ const DrawingApp = () => {
                     <div
                         style={{
                             position: 'absolute',
-                            left: textInputPosition.x,
-                            top: textInputPosition.y,
+                            left: textInputPosition.x * zoom + position.x, // Adjust for zoom and pan
+                            top: textInputPosition.y * zoom + position.y, // Adjust for zoom and pan
+                            zIndex: 1000,
                         }}
                     >
                         <input
@@ -849,8 +943,8 @@ const DrawingApp = () => {
                     <div
                         style={{
                             position: 'absolute',
-                            left: textInputPosition.x,
-                            top: textInputPosition.y,
+                            left: textInputPosition.x * zoom + position.x, // Adjust for zoom and pan
+                            top: textInputPosition.y * zoom + position.y, // Adjust for zoom and pan
                             zIndex: 1000,
                         }}
                     >
